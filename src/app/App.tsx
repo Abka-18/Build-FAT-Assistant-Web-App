@@ -113,10 +113,10 @@ export default function App() {
         }),
       });
 
-      const payload = await response.json().catch(() => ({}));
+      const payload = await response.json().catch(() => null);
 
       if (!response.ok) {
-        throw new Error(payload.error || 'AI request failed.');
+        throw new Error(getApiErrorMessage(response.status, payload));
       }
 
       const assistantMessage: Message = {
@@ -130,7 +130,7 @@ export default function App() {
     } catch (error) {
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
-        text: error instanceof Error ? error.message : 'Unable to contact the AI model.',
+        text: error instanceof Error ? error.message : 'Tidak bisa menghubungi AI server. Pastikan npm run dev masih berjalan dan HF_TOKEN sudah diisi.',
         sender: 'assistant',
         timestamp: new Date()
       };
@@ -138,6 +138,17 @@ export default function App() {
     } finally {
       setIsTyping(false);
     }
+  };
+
+  const getApiErrorMessage = (status: number, payload: unknown): string => {
+    const error = typeof payload === 'object' && payload && 'error' in payload
+      ? String((payload as { error?: unknown }).error)
+      : '';
+
+    if (error) return error;
+    if (status === 404) return 'Endpoint /api/chat tidak ditemukan. Jalankan ulang dengan npm run dev dari versi terbaru.';
+    if (status === 502) return 'AI server gagal menghubungi Hugging Face. Cek koneksi internet, token, atau akses model.';
+    return `AI request failed dengan status ${status}.`;
   };
 
   return (

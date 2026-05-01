@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "vite",
+    "dev": "node dev.mjs",
+    "vite": "vite",
     "api": "node server.mjs",
     "start": "node server.mjs"
   },

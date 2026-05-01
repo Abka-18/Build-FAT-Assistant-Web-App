@@ -7,23 +7,25 @@
 
   Run `npm i` to install the dependencies.
 
-  Create a Hugging Face token with Inference Providers access, then set it in your environment:
+  Create a Hugging Face token with Inference Providers access, then copy `.env.example` to `.env` and fill in your token:
 
-  ```bash
+  ```env
   HF_TOKEN=hf_your_huggingface_token_here
   HF_MODEL=Qwen/Qwen2.5-7B-Instruct
   ```
 
-  In one terminal, run the Hugging Face API proxy:
-
-  ```bash
-  npm run api
-  ```
-
-  In another terminal, run the Vite development server:
+  Run the Vite app and Hugging Face API proxy together:
 
   ```bash
   npm run dev
+  ```
+
+  Open the URL shown by Vite, usually `http://localhost:5173`.
+
+  To run only the API proxy:
+
+  ```bash
+  npm run api
   ```
 
   For production, build the web app and start the server:

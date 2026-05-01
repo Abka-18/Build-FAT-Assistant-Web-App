@@ -4,6 +4,9 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
+
+await loadEnvFile();
+
 const PORT = Number(process.env.PORT || 8787);
 const HF_TOKEN = process.env.HF_TOKEN;
 const HF_MODEL = process.env.HF_MODEL || 'Qwen/Qwen2.5-7B-Instruct';
@@ -20,6 +23,29 @@ const mimeTypes = {
   '.jpeg': 'image/jpeg',
   '.ico': 'image/x-icon',
 };
+
+async function loadEnvFile() {
+  try {
+    const content = await readFile(join(__dirname, '.env'), 'utf8');
+
+    for (const line of content.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+
+      const equalsIndex = trimmed.indexOf('=');
+      if (equalsIndex === -1) continue;
+
+      const key = trimmed.slice(0, equalsIndex).trim();
+      const value = trimmed.slice(equalsIndex + 1).trim().replace(/^['"]|['"]$/g, '');
+
+      if (key && process.env[key] === undefined) {
+        process.env[key] = value;
+      }
+    }
+  } catch {
+    // .env is optional. Production hosts usually provide environment variables directly.
+  }
+}
 
 function sendJson(res, status, data) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
@@ -56,7 +82,7 @@ function buildMessages(question, knowledgeBase) {
 async function handleChat(req, res) {
   if (!HF_TOKEN) {
     sendJson(res, 500, {
-      error: 'HF_TOKEN is not configured. Add your Hugging Face token to the environment before starting the server.',
+      error: 'HF_TOKEN belum diset. Buat file .env dari .env.example, isi token Hugging Face, lalu restart npm run dev.',
     });
     return;
   }
@@ -94,7 +120,7 @@ async function handleChat(req, res) {
 
     if (!hfResponse.ok) {
       sendJson(res, hfResponse.status, {
-        error: payload.error?.message || payload.error || 'Hugging Face request failed.',
+        error: getHuggingFaceError(payload) || `Hugging Face request failed with status ${hfResponse.status}.`,
       });
       return;
     }
@@ -109,6 +135,14 @@ async function handleChat(req, res) {
       error: error instanceof Error ? error.message : 'Failed to contact Hugging Face.',
     });
   }
+}
+
+function getHuggingFaceError(payload) {
+  if (!payload) return '';
+  if (typeof payload.error === 'string') return payload.error;
+  if (typeof payload.error?.message === 'string') return payload.error.message;
+  if (typeof payload.message === 'string') return payload.message;
+  return '';
 }
 
 async function serveStatic(req, res) {
