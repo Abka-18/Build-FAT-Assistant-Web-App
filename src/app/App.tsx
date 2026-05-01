@@ -211,7 +211,7 @@ export default function App() {
     metadata?: Record<string, unknown>;
   }): Promise<{ id: string } | null> => {
     const MAX_CONTENT = 500_000;
-    const payload = {
+    const body = {
       ...doc,
       content: doc.content.length > MAX_CONTENT
         ? doc.content.slice(0, MAX_CONTENT) + '\n[Content truncated — full text available in session only]'
@@ -220,7 +220,7 @@ export default function App() {
     const response = await fetch(`${apiBase}/api/documents`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(body),
     });
     if (response.status === 503) return null;
     if (!response.ok) {
