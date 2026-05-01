@@ -68,6 +68,10 @@ export default function App() {
   const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
   const [authSession, setAuthSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [isRecovery, setIsRecovery] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
+  const [recoveryError, setRecoveryError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const theme = themeTokens[themeMode];
@@ -85,8 +89,9 @@ export default function App() {
       setAuthSession(session);
       setAuthLoading(false);
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setAuthSession(session);
+      if (event === 'PASSWORD_RECOVERY') setIsRecovery(true);
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -296,6 +301,68 @@ export default function App() {
 
   if (!authSession) {
     return <LoginPage theme={theme} themeMode={themeMode} onToggleTheme={toggleTheme} />;
+  }
+
+  if (isRecovery) {
+    const handleSetPassword = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setRecoveryError('');
+      setRecoveryLoading(true);
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      setRecoveryLoading(false);
+      if (error) {
+        setRecoveryError(error.message);
+      } else {
+        setIsRecovery(false);
+        setNewPassword('');
+      }
+    };
+
+    return (
+      <div className="size-full flex items-center justify-center" style={{ backgroundColor: theme.app }}>
+        <div
+          className="w-full max-w-sm mx-4 p-8 rounded-2xl"
+          style={{ backgroundColor: theme.surface, boxShadow: '0 4px 24px rgba(0,0,0,0.12)' }}
+        >
+          <div className="flex flex-col items-center gap-2 mb-8">
+            <div
+              className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg"
+              style={{ backgroundColor: theme.primary }}
+            >
+              FA
+            </div>
+            <h1 className="text-xl font-semibold" style={{ color: theme.text }}>Set New Password</h1>
+            <p className="text-sm" style={{ color: theme.textMuted }}>Enter your new password below</p>
+          </div>
+          <form onSubmit={handleSetPassword} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium" style={{ color: theme.text }}>New Password</label>
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="••••••••"
+                required
+                minLength={6}
+                className="px-4 py-3 border rounded-lg text-sm outline-none"
+                style={{ backgroundColor: theme.input, borderColor: theme.border, color: theme.text }}
+              />
+            </div>
+            {recoveryError && (
+              <p className="text-sm text-center" style={{ color: theme.danger }}>{recoveryError}</p>
+            )}
+            <button
+              type="submit"
+              disabled={recoveryLoading}
+              className="w-full py-3 rounded-lg font-medium text-sm"
+              style={{ backgroundColor: theme.primary, color: 'white', opacity: recoveryLoading ? 0.7 : 1 }}
+            >
+              {recoveryLoading ? 'Saving...' : 'Set New Password'}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
   }
 
   return (
