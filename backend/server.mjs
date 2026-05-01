@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createClient } from '@supabase/supabase-js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -12,6 +13,16 @@ const HF_TOKEN = process.env.HF_TOKEN;
 const HF_MODEL = process.env.HF_MODEL || 'Qwen/Qwen2.5-7B-Instruct';
 const HF_API_URL = 'https://router.huggingface.co/v1/chat/completions';
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'http://localhost:5173';
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  })
+  : null;
 
 async function loadEnvFile() {
   try {
@@ -81,6 +92,93 @@ function buildMessages(question, knowledgeBase) {
   ];
 }
 
+function ensureDatabase(req, res) {
+  if (supabase) return true;
+
+  sendJson(req, res, 503, {
+    error: 'Supabase belum diset. Isi SUPABASE_URL dan SUPABASE_SERVICE_ROLE_KEY di backend/.env, lalu restart backend.',
+  });
+  return false;
+}
+
+async function handleCreateDocument(req, res) {
+  if (!ensureDatabase(req, res)) return;
+
+  let body;
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    sendJson(req, res, 400, { error: 'Invalid JSON request body.' });
+    return;
+  }
+
+  const title = String(body.title || '').trim();
+  const content = String(body.content || '').trim();
+  const sourceType = body.sourceType === 'manual' ? 'manual' : 'upload';
+
+  if (!title || !content) {
+    sendJson(req, res, 400, { error: 'Document title and content are required.' });
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from('documents')
+    .insert({
+      title,
+      content,
+      source_type: sourceType,
+      metadata: body.metadata && typeof body.metadata === 'object' ? body.metadata : {},
+    })
+    .select('id,title,source_type,created_at')
+    .single();
+
+  if (error) {
+    sendJson(req, res, 500, { error: error.message });
+    return;
+  }
+
+  sendJson(req, res, 201, { document: data });
+}
+
+async function ensureChatSession(sessionId, title) {
+  if (!supabase) return null;
+
+  if (sessionId) {
+    const { data, error } = await supabase
+      .from('chat_sessions')
+      .upsert({ id: sessionId, title: title || 'FAT Assistant Chat' }, { onConflict: 'id' })
+      .select('id')
+      .single();
+
+    if (error) throw error;
+    return data.id;
+  }
+
+  const { data, error } = await supabase
+    .from('chat_sessions')
+    .insert({ title: title || 'FAT Assistant Chat' })
+    .select('id')
+    .single();
+
+  if (error) throw error;
+  return data.id;
+}
+
+async function saveChatMessage(sessionId, role, content, metadata = {}) {
+  if (!supabase || !sessionId || !content) return;
+
+  const { error } = await supabase
+    .from('chat_messages')
+    .insert({
+      session_id: sessionId,
+      role,
+      content,
+      metadata,
+    });
+
+  if (error) throw error;
+}
+
 async function handleChat(req, res) {
   if (!HF_TOKEN) {
     sendJson(req, res, 500, {
@@ -128,9 +226,25 @@ async function handleChat(req, res) {
     }
 
     const answer = payload.choices?.[0]?.message?.content;
+    let sessionId = body.sessionId || null;
+
+    if (supabase) {
+      sessionId = await ensureChatSession(
+        sessionId,
+        question.length > 80 ? `${question.slice(0, 77)}...` : question,
+      );
+      await saveChatMessage(sessionId, 'user', question, {
+        hasKnowledgeBase: Boolean(String(body.knowledgeBase || '').trim()),
+      });
+      await saveChatMessage(sessionId, 'assistant', answer || 'The model did not return an answer.', {
+        model: HF_MODEL,
+      });
+    }
+
     sendJson(req, res, 200, {
       answer: answer || 'The model did not return an answer.',
       model: HF_MODEL,
+      sessionId,
     });
   } catch (error) {
     sendJson(req, res, 502, {
@@ -160,7 +274,13 @@ createServer(async (req, res) => {
       ok: true,
       model: HF_MODEL,
       hasToken: Boolean(HF_TOKEN),
+      hasSupabase: Boolean(supabase),
     });
+    return;
+  }
+
+  if (req.method === 'POST' && req.url?.startsWith('/api/documents')) {
+    await handleCreateDocument(req, res);
     return;
   }
 

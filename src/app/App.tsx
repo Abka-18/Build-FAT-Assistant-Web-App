@@ -55,6 +55,7 @@ export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const theme = themeTokens[themeMode];
@@ -89,6 +90,17 @@ export default function App() {
 
       setUploadedFile(file);
       setKnowledgeBase(text);
+      await saveDocument({
+        title: file.name,
+        content: text,
+        sourceType: 'upload',
+        metadata: {
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type,
+          extension,
+        },
+      });
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Unable to read this file');
     }
@@ -127,8 +139,42 @@ export default function App() {
   const handleSaveMemory = () => {
     if (manualText.trim()) {
       setKnowledgeBase((prev) => prev + '\n\n' + manualText);
+      saveDocument({
+        title: `Manual memory ${new Date().toLocaleString()}`,
+        content: manualText,
+        sourceType: 'manual',
+        metadata: {
+          createdFrom: 'manual-textarea',
+        },
+      }).catch((error) => {
+        console.warn('Failed to save manual memory to Supabase:', error);
+      });
       setManualText('');
       alert('Knowledge base updated!');
+    }
+  };
+
+  const saveDocument = async (document: {
+    title: string;
+    content: string;
+    sourceType: 'upload' | 'manual';
+    metadata?: Record<string, unknown>;
+  }) => {
+    const response = await fetch('/api/documents', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(document),
+    });
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      const error = typeof payload === 'object' && payload && 'error' in payload
+        ? String((payload as { error?: unknown }).error)
+        : 'Failed to save document to Supabase.';
+
+      throw new Error(error);
     }
   };
 
@@ -154,6 +200,7 @@ export default function App() {
           'content-type': 'application/json',
         },
         body: JSON.stringify({
+          sessionId,
           question,
           knowledgeBase,
         }),
@@ -171,6 +218,9 @@ export default function App() {
         sender: 'assistant',
         timestamp: new Date(),
       };
+      if (payload.sessionId) {
+        setSessionId(payload.sessionId);
+      }
       setMessages((prev) => [...prev, assistantMessage]);
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     } catch (error) {

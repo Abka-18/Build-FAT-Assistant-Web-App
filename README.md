@@ -18,7 +18,11 @@
   HF_MODEL=Qwen/Qwen2.5-7B-Instruct
   PORT=8787
   ALLOWED_ORIGIN=http://localhost:5173
+  SUPABASE_URL=https://your-project-ref.supabase.co
+  SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
   ```
+
+  Run the SQL in `backend/supabase/schema.sql` inside the Supabase SQL Editor before using database features.
 
   Run the backend in one terminal:
 
