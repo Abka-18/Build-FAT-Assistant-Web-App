@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CheckCircle2, FileText, Folder, Moon, Send, Sun, Upload } from 'lucide-react';
+import { FileText, Folder, Moon, Send, Sun, Trash2, Upload } from 'lucide-react';
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 
@@ -8,6 +8,13 @@ interface Message {
   text: string;
   sender: 'user' | 'assistant';
   timestamp: Date;
+}
+
+interface KBDocument {
+  id: string;
+  title: string;
+  content: string;
+  sourceType: 'upload' | 'manual';
 }
 
 type ThemeMode = 'light' | 'dark';
@@ -24,7 +31,7 @@ const themeTokens = {
     text: '#0F172A',
     textMuted: '#64748B',
     primary: '#2563EB',
-    success: '#10B981',
+    danger: '#EF4444',
     shadow: '0 1px 3px rgba(15, 23, 42, 0.08)',
     input: '#FFFFFF',
   },
@@ -37,7 +44,7 @@ const themeTokens = {
     text: '#E5E7EB',
     textMuted: '#94A3B8',
     primary: '#3B82F6',
-    success: '#34D399',
+    danger: '#F87171',
     shadow: '0 1px 3px rgba(0, 0, 0, 0.35)',
     input: '#0F172A',
   },
@@ -45,13 +52,13 @@ const themeTokens = {
 
 export default function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
-    const savedTheme = localStorage.getItem('fat-assistant-theme');
-    if (savedTheme === 'light' || savedTheme === 'dark') return savedTheme;
+    const saved = localStorage.getItem('fat-assistant-theme');
+    if (saved === 'light' || saved === 'dark') return saved;
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   });
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [documents, setDocuments] = useState<KBDocument[]>([]);
+  const [isLoadingDocs, setIsLoadingDocs] = useState(true);
   const [manualText, setManualText] = useState('');
-  const [knowledgeBase, setKnowledgeBase] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -60,47 +67,73 @@ export default function App() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const theme = themeTokens[themeMode];
 
+  const knowledgeBase = documents.map((d) => d.content).join('\n\n');
+  const apiBase = (import.meta.env.VITE_API_URL as string) || '';
+
   useEffect(() => {
     localStorage.setItem('fat-assistant-theme', themeMode);
     document.documentElement.style.colorScheme = themeMode;
   }, [themeMode]);
 
-  const toggleTheme = () => {
-    setThemeMode((currentTheme) => currentTheme === 'light' ? 'dark' : 'light');
+  useEffect(() => {
+    fetchDocuments();
+  }, []);
+
+  const fetchDocuments = async () => {
+    setIsLoadingDocs(true);
+    try {
+      const res = await fetch(`${apiBase}/api/documents`);
+      if (res.ok) {
+        const payload = await res.json();
+        setDocuments(
+          payload.documents.map((d: { id: string; title: string; content: string; source_type: string }) => ({
+            id: d.id,
+            title: d.title,
+            content: d.content,
+            sourceType: d.source_type as 'upload' | 'manual',
+          })),
+        );
+      }
+    } catch {
+      // Supabase not configured — local-only mode, start empty
+    } finally {
+      setIsLoadingDocs(false);
+    }
   };
+
+  const toggleTheme = () => setThemeMode((t) => (t === 'light' ? 'dark' : 'light'));
 
   const handleFileUpload = async (file: File) => {
     if (file.size > 2 * 1024 * 1024) {
       alert('File size must be less than 2MB');
       return;
     }
-
     const extension = file.name.split('.').pop()?.toLowerCase();
     if (!extension || !supportedExtensions.includes(extension)) {
       alert('Only .txt, .pdf, .docx, .xls, .xlsx, and .csv files are supported');
       return;
     }
-
     try {
-      const text = await extractTextFromFile(file, extension);
-      if (!text.trim()) {
+      const content = await extractTextFromFile(file, extension);
+      if (!content.trim()) {
         alert('No readable text was found in this file');
         return;
       }
+      const tempId = `temp-${Date.now()}`;
+      setDocuments((prev) => [...prev, { id: tempId, title: file.name, content, sourceType: 'upload' }]);
 
-      setUploadedFile(file);
-      setKnowledgeBase(text);
-      await saveDocument({
+      saveDocumentToBackend({
         title: file.name,
-        content: text,
+        content,
         sourceType: 'upload',
-        metadata: {
-          fileName: file.name,
-          fileSize: file.size,
-          fileType: file.type,
-          extension,
-        },
-      });
+        metadata: { fileName: file.name, fileSize: file.size, fileType: file.type, extension },
+      })
+        .then((saved) => {
+          if (saved?.id) {
+            setDocuments((prev) => prev.map((d) => (d.id === tempId ? { ...d, id: saved.id } : d)));
+          }
+        })
+        .catch((err) => console.warn('Failed to save to Supabase:', err));
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Unable to read this file');
     }
@@ -110,23 +143,18 @@ export default function App() {
     if (extension === 'txt' || extension === 'csv' || extension === 'pdf') {
       return file.text();
     }
-
     const buffer = await file.arrayBuffer();
-
     if (extension === 'docx') {
       const result = await mammoth.extractRawText({ arrayBuffer: buffer });
       return result.value;
     }
-
     if (extension === 'xls' || extension === 'xlsx') {
       const workbook = XLSX.read(buffer, { type: 'array' });
       return workbook.SheetNames.map((sheetName) => {
         const worksheet = workbook.Sheets[sheetName];
-        const rows = XLSX.utils.sheet_to_csv(worksheet);
-        return `Sheet: ${sheetName}\n${rows}`;
+        return `Sheet: ${sheetName}\n${XLSX.utils.sheet_to_csv(worksheet)}`;
       }).join('\n\n');
     }
-
     throw new Error('Unsupported file type');
   };
 
@@ -137,110 +165,100 @@ export default function App() {
   };
 
   const handleSaveMemory = () => {
-    if (manualText.trim()) {
-      setKnowledgeBase((prev) => prev + '\n\n' + manualText);
-      saveDocument({
-        title: `Manual memory ${new Date().toLocaleString()}`,
-        content: manualText,
-        sourceType: 'manual',
-        metadata: {
-          createdFrom: 'manual-textarea',
-        },
-      }).catch((error) => {
-        console.warn('Failed to save manual memory to Supabase:', error);
-      });
-      setManualText('');
-      alert('Knowledge base updated!');
-    }
+    const text = manualText.trim();
+    if (!text) return;
+    const title = `Manual memory ${new Date().toLocaleString()}`;
+    const tempId = `temp-${Date.now()}`;
+    setDocuments((prev) => [...prev, { id: tempId, title, content: text, sourceType: 'manual' }]);
+    setManualText('');
+    alert('Knowledge base updated!');
+    saveDocumentToBackend({ title, content: text, sourceType: 'manual', metadata: { createdFrom: 'manual-textarea' } })
+      .then((saved) => {
+        if (saved?.id) {
+          setDocuments((prev) => prev.map((d) => (d.id === tempId ? { ...d, id: saved.id } : d)));
+        }
+      })
+      .catch((err) => console.warn('Failed to save manual memory to Supabase:', err));
   };
 
-  const saveDocument = async (document: {
+  const saveDocumentToBackend = async (doc: {
     title: string;
     content: string;
     sourceType: 'upload' | 'manual';
     metadata?: Record<string, unknown>;
-  }) => {
-    const response = await fetch('/api/documents', {
+  }): Promise<{ id: string } | null> => {
+    const response = await fetch(`${apiBase}/api/documents`, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(document),
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(doc),
     });
-
+    if (response.status === 503) return null;
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
-      const error = typeof payload === 'object' && payload && 'error' in payload
-        ? String((payload as { error?: unknown }).error)
-        : 'Failed to save document to Supabase.';
-
+      const error =
+        typeof payload === 'object' && payload && 'error' in payload
+          ? String((payload as { error?: unknown }).error)
+          : 'Failed to save document.';
       throw new Error(error);
+    }
+    const payload = await response.json();
+    return payload.document;
+  };
+
+  const handleDeleteDocument = (id: string) => {
+    setDocuments((prev) => prev.filter((d) => d.id !== id));
+    if (!id.startsWith('temp-')) {
+      fetch(`${apiBase}/api/documents/${id}`, { method: 'DELETE' }).catch(() => {});
     }
   };
 
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
     const question = inputValue;
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      text: question,
-      sender: 'user',
-      timestamp: new Date(),
-    };
-
+    const userMessage: Message = { id: Date.now().toString(), text: question, sender: 'user', timestamp: new Date() };
     setMessages((prev) => [...prev, userMessage]);
     setInputValue('');
     setIsTyping(true);
-
     try {
-      const response = await fetch('/api/chat', {
+      const response = await fetch(`${apiBase}/api/chat`, {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          sessionId,
-          question,
-          knowledgeBase,
-        }),
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId, question, knowledgeBase }),
       });
-
       const payload = await response.json().catch(() => null);
-
-      if (!response.ok) {
-        throw new Error(getApiErrorMessage(response.status, payload));
-      }
-
+      if (!response.ok) throw new Error(getApiErrorMessage(response.status, payload));
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         text: payload.answer || 'The model did not return an answer.',
         sender: 'assistant',
         timestamp: new Date(),
       };
-      if (payload.sessionId) {
-        setSessionId(payload.sessionId);
-      }
+      if (payload.sessionId) setSessionId(payload.sessionId);
       setMessages((prev) => [...prev, assistantMessage]);
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     } catch (error) {
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        text: error instanceof Error ? error.message : 'Tidak bisa menghubungi AI server. Pastikan npm run dev masih berjalan dan HF_TOKEN sudah diisi.',
-        sender: 'assistant',
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: (Date.now() + 1).toString(),
+          text:
+            error instanceof Error
+              ? error.message
+              : 'Tidak bisa menghubungi AI server. Pastikan npm run dev masih berjalan dan HF_TOKEN sudah diisi.',
+          sender: 'assistant',
+          timestamp: new Date(),
+        },
+      ]);
     } finally {
       setIsTyping(false);
     }
   };
 
   const getApiErrorMessage = (status: number, payload: unknown): string => {
-    const error = typeof payload === 'object' && payload && 'error' in payload
-      ? String((payload as { error?: unknown }).error)
-      : '';
-
+    const error =
+      typeof payload === 'object' && payload && 'error' in payload
+        ? String((payload as { error?: unknown }).error)
+        : '';
     if (error) return error;
     if (status === 404) return 'Endpoint /api/chat tidak ditemukan. Jalankan ulang dengan npm run dev dari versi terbaru.';
     if (status === 502) return 'AI server gagal menghubungi Hugging Face. Cek koneksi internet, token, atau akses model.';
@@ -249,7 +267,11 @@ export default function App() {
 
   return (
     <div className="size-full flex transition-colors duration-200" style={{ backgroundColor: theme.app }}>
-      <div className="w-[30%] border-r flex flex-col transition-colors duration-200" style={{ backgroundColor: theme.surface, borderColor: theme.border }}>
+      {/* Left panel — Knowledge Base */}
+      <div
+        className="w-[30%] border-r flex flex-col transition-colors duration-200"
+        style={{ backgroundColor: theme.surface, borderColor: theme.border }}
+      >
         <div className="p-4 border-b" style={{ borderColor: theme.border }}>
           <h2 className="flex items-center gap-2" style={{ color: theme.text }}>
             <Folder size={20} style={{ color: theme.primary }} />
@@ -261,12 +283,17 @@ export default function App() {
         </div>
 
         <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-4">
+          {/* Drop zone */}
           <div
             onDrop={handleDrop}
             onDragOver={(e) => e.preventDefault()}
             onClick={() => fileInputRef.current?.click()}
-            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = theme.surfaceHover; }}
-            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = themeMode === 'dark' ? theme.input : 'transparent'; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = theme.surfaceHover;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = themeMode === 'dark' ? theme.input : 'transparent';
+            }}
             className="border-2 border-dashed rounded-lg p-6 cursor-pointer transition-colors"
             style={{ borderColor: theme.border, backgroundColor: themeMode === 'dark' ? theme.input : 'transparent' }}
           >
@@ -279,9 +306,7 @@ export default function App() {
             />
             <div className="flex flex-col items-center gap-2 text-center">
               <Upload size={32} style={{ color: theme.textMuted }} />
-              <p style={{ color: theme.text }}>
-                Drag & drop or click to upload
-              </p>
+              <p style={{ color: theme.text }}>Drag & drop or click to upload</p>
               <p className="text-sm" style={{ color: theme.textMuted }}>
                 .txt, .pdf, .docx, .xls, .xlsx, or .csv
               </p>
@@ -291,16 +316,43 @@ export default function App() {
             </div>
           </div>
 
-          {uploadedFile && (
-            <div className="flex items-center gap-2 p-3 rounded-lg" style={{ backgroundColor: theme.surfaceMuted }}>
-              <CheckCircle2 size={20} style={{ color: theme.success }} />
-              <FileText size={18} style={{ color: theme.textMuted }} />
-              <span className="text-sm flex-1" style={{ color: theme.text }}>
-                {uploadedFile.name}
-              </span>
+          {/* Document list */}
+          {isLoadingDocs ? (
+            <div className="flex items-center justify-center py-2">
+              <div
+                className="w-5 h-5 border-2 rounded-full animate-spin"
+                style={{ borderColor: theme.border, borderTopColor: theme.primary }}
+              />
             </div>
-          )}
+          ) : documents.length > 0 ? (
+            <div className="flex flex-col gap-1">
+              <p className="text-xs font-medium uppercase tracking-wide" style={{ color: theme.textMuted }}>
+                {documents.length} document{documents.length !== 1 ? 's' : ''} loaded
+              </p>
+              {documents.map((doc) => (
+                <div
+                  key={doc.id}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg group"
+                  style={{ backgroundColor: theme.surfaceMuted }}
+                >
+                  <FileText size={15} style={{ color: theme.textMuted, flexShrink: 0 }} />
+                  <span className="text-sm flex-1 truncate" style={{ color: theme.text }} title={doc.title}>
+                    {doc.title}
+                  </span>
+                  <button
+                    onClick={() => handleDeleteDocument(doc.id)}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:opacity-100"
+                    style={{ color: theme.danger }}
+                    title="Remove from knowledge base"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
 
+          {/* Manual text */}
           <div className="flex flex-col gap-2">
             <label style={{ color: theme.text }}>Or paste text directly</label>
             <textarea
@@ -322,16 +374,28 @@ export default function App() {
         </div>
       </div>
 
+      {/* Right panel — Chat */}
       <div className="flex-1 flex flex-col transition-colors duration-200" style={{ backgroundColor: theme.surface }}>
-        <div className="p-4 border-b flex items-center gap-3" style={{ borderColor: theme.border, boxShadow: theme.shadow }}>
-          <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: theme.primary, color: 'white' }}>
+        <div
+          className="p-4 border-b flex items-center gap-3"
+          style={{ borderColor: theme.border, boxShadow: theme.shadow }}
+        >
+          <div
+            className="w-10 h-10 rounded-full flex items-center justify-center"
+            style={{ backgroundColor: theme.primary, color: 'white' }}
+          >
             FA
           </div>
           <div className="flex-1">
             <h3 style={{ color: theme.text }}>FAT Assistant</h3>
             <p className="text-sm flex items-center gap-2" style={{ color: theme.textMuted }}>
-              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: theme.success }} />
-              Powered by AI - Based on uploaded knowledge
+              <span
+                className="w-2 h-2 rounded-full"
+                style={{ backgroundColor: documents.length > 0 ? '#10B981' : theme.textMuted }}
+              />
+              {documents.length > 0
+                ? `${documents.length} document${documents.length !== 1 ? 's' : ''} in knowledge base`
+                : 'No knowledge base loaded'}
             </p>
           </div>
           <button
@@ -349,7 +413,10 @@ export default function App() {
         <div className="flex-1 overflow-y-auto p-4">
           {messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center gap-4 text-center">
-              <div className="w-24 h-24 rounded-full flex items-center justify-center" style={{ backgroundColor: theme.surfaceMuted }}>
+              <div
+                className="w-24 h-24 rounded-full flex items-center justify-center"
+                style={{ backgroundColor: theme.surfaceMuted }}
+              >
                 <FileText size={48} style={{ color: theme.textMuted }} />
               </div>
               <p style={{ color: theme.text }}>Ask me anything about FAT workflows, SOPs, or contacts.</p>
@@ -357,12 +424,9 @@ export default function App() {
           ) : (
             <div className="flex flex-col gap-4">
               {messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
+                <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div
-                    className="max-w-[70%] px-4 py-3 rounded-xl"
+                    className="max-w-[70%] px-4 py-3 rounded-xl whitespace-pre-wrap"
                     style={{
                       backgroundColor: msg.sender === 'user' ? theme.primary : theme.surfaceMuted,
                       color: msg.sender === 'user' ? 'white' : theme.text,
@@ -376,9 +440,18 @@ export default function App() {
                 <div className="flex justify-start">
                   <div className="px-4 py-3 rounded-xl" style={{ backgroundColor: theme.surfaceMuted }}>
                     <div className="flex gap-1">
-                      <span className="w-2 h-2 rounded-full animate-bounce" style={{ backgroundColor: theme.textMuted, animationDelay: '0ms' }} />
-                      <span className="w-2 h-2 rounded-full animate-bounce" style={{ backgroundColor: theme.textMuted, animationDelay: '150ms' }} />
-                      <span className="w-2 h-2 rounded-full animate-bounce" style={{ backgroundColor: theme.textMuted, animationDelay: '300ms' }} />
+                      <span
+                        className="w-2 h-2 rounded-full animate-bounce"
+                        style={{ backgroundColor: theme.textMuted, animationDelay: '0ms' }}
+                      />
+                      <span
+                        className="w-2 h-2 rounded-full animate-bounce"
+                        style={{ backgroundColor: theme.textMuted, animationDelay: '150ms' }}
+                      />
+                      <span
+                        className="w-2 h-2 rounded-full animate-bounce"
+                        style={{ backgroundColor: theme.textMuted, animationDelay: '300ms' }}
+                      />
                     </div>
                   </div>
                 </div>
@@ -394,7 +467,7 @@ export default function App() {
               type="text"
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+              onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
               placeholder="Ask a question..."
               className="flex-1 px-4 py-3 border rounded-lg"
               style={{ backgroundColor: theme.input, borderColor: theme.border, color: theme.text }}

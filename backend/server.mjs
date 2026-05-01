@@ -101,6 +101,43 @@ function ensureDatabase(req, res) {
   return false;
 }
 
+async function handleListDocuments(req, res) {
+  if (!supabase) {
+    sendJson(req, res, 200, { documents: [] });
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from('documents')
+    .select('id, title, source_type, content, created_at')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    sendJson(req, res, 500, { error: error.message });
+    return;
+  }
+
+  sendJson(req, res, 200, { documents: data });
+}
+
+async function handleDeleteDocument(req, res, id) {
+  if (!ensureDatabase(req, res)) return;
+
+  if (!id || !/^[0-9a-f-]{36}$/i.test(id)) {
+    sendJson(req, res, 400, { error: 'Invalid document ID.' });
+    return;
+  }
+
+  const { error } = await supabase.from('documents').delete().eq('id', id);
+
+  if (error) {
+    sendJson(req, res, 500, { error: error.message });
+    return;
+  }
+
+  sendJson(req, res, 200, { ok: true });
+}
+
 async function handleCreateDocument(req, res) {
   if (!ensureDatabase(req, res)) return;
 
@@ -279,8 +316,17 @@ createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === 'POST' && req.url?.startsWith('/api/documents')) {
-    await handleCreateDocument(req, res);
+  if (req.url?.startsWith('/api/documents')) {
+    if (req.method === 'GET') {
+      await handleListDocuments(req, res);
+    } else if (req.method === 'POST') {
+      await handleCreateDocument(req, res);
+    } else if (req.method === 'DELETE') {
+      const id = req.url.slice('/api/documents/'.length);
+      await handleDeleteDocument(req, res, id);
+    } else {
+      sendJson(req, res, 405, { error: 'Method not allowed.' });
+    }
     return;
   }
 
