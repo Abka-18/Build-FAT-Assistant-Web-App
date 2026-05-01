@@ -1,5 +1,7 @@
 import { useState, useRef } from 'react';
 import { Upload, Send, CheckCircle2, FileText } from 'lucide-react';
+import mammoth from 'mammoth';
+import * as XLSX from 'xlsx';
 
 interface Message {
   id: string;
@@ -7,6 +9,8 @@ interface Message {
   sender: 'user' | 'assistant';
   timestamp: Date;
 }
+
+const supportedExtensions = ['txt', 'pdf', 'docx', 'xls', 'xlsx', 'csv'];
 
 export default function App() {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -18,23 +22,54 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  const handleFileUpload = (file: File) => {
+  const handleFileUpload = async (file: File) => {
     if (file.size > 2 * 1024 * 1024) {
       alert('File size must be less than 2MB');
       return;
     }
-    if (!file.name.endsWith('.txt') && !file.name.endsWith('.pdf')) {
-      alert('Only .txt and .pdf files are supported');
+
+    const extension = file.name.split('.').pop()?.toLowerCase();
+    if (!extension || !supportedExtensions.includes(extension)) {
+      alert('Only .txt, .pdf, .docx, .xls, .xlsx, and .csv files are supported');
       return;
     }
-    setUploadedFile(file);
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = e.target?.result as string;
+    try {
+      const text = await extractTextFromFile(file, extension);
+      if (!text.trim()) {
+        alert('No readable text was found in this file');
+        return;
+      }
+
+      setUploadedFile(file);
       setKnowledgeBase(text);
-    };
-    reader.readAsText(file);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Unable to read this file');
+    }
+  };
+
+  const extractTextFromFile = async (file: File, extension: string): Promise<string> => {
+    if (extension === 'txt' || extension === 'csv' || extension === 'pdf') {
+      return file.text();
+    }
+
+    const buffer = await file.arrayBuffer();
+
+    if (extension === 'docx') {
+      const result = await mammoth.extractRawText({ arrayBuffer: buffer });
+      return result.value;
+    }
+
+    if (extension === 'xls' || extension === 'xlsx') {
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      return workbook.SheetNames.map((sheetName) => {
+        const worksheet = workbook.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_csv(worksheet);
+        return `Sheet: ${sheetName}\n${rows}`;
+      }).join('\n\n');
+    }
+
+    throw new Error('Unsupported file type');
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -130,7 +165,7 @@ export default function App() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".txt,.pdf"
+              accept=".txt,.pdf,.docx,.xls,.xlsx,.csv"
               onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
               className="hidden"
             />
@@ -140,7 +175,7 @@ export default function App() {
                 Drag & drop or click to upload
               </p>
               <p className="text-sm" style={{ color: '#64748B' }}>
-                .txt or .pdf file
+                .txt, .pdf, .docx, .xls, .xlsx, or .csv
               </p>
               <p className="text-xs" style={{ color: '#64748B' }}>
                 Max 2MB
