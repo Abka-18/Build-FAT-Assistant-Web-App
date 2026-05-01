@@ -51,12 +51,13 @@ export default function App() {
     }
   };
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
+    const question = inputValue;
 
     const userMessage: Message = {
       id: Date.now().toString(),
-      text: inputValue,
+      text: question,
       sender: 'user',
       timestamp: new Date()
     };
@@ -65,40 +66,43 @@ export default function App() {
     setInputValue('');
     setIsTyping(true);
 
-    setTimeout(() => {
-      const response = generateResponse(inputValue, knowledgeBase);
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          question,
+          knowledgeBase,
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(payload.error || 'AI request failed.');
+      }
+
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
-        text: response,
+        text: payload.answer || 'The model did not return an answer.',
         sender: 'assistant',
         timestamp: new Date()
       };
       setMessages(prev => [...prev, assistantMessage]);
-      setIsTyping(false);
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-    }, 1500);
-  };
-
-  const generateResponse = (question: string, kb: string): string => {
-    if (!kb) {
-      return "I don't have any knowledge base loaded yet. Please upload a document or paste some information in the Knowledge Base panel so I can help you better.";
+    } catch (error) {
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        text: error instanceof Error ? error.message : 'Unable to contact the AI model.',
+        sender: 'assistant',
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, assistantMessage]);
+    } finally {
+      setIsTyping(false);
     }
-
-    const lowerQuestion = question.toLowerCase();
-
-    if (lowerQuestion.includes('expense') || lowerQuestion.includes('reimbursement')) {
-      return "Based on the uploaded knowledge base: Expense reimbursements are submitted via the internal portal by the 5th of each month. Attach original receipts and fill out Form EXP-03. Approval is handled by the direct manager within 3 working days.";
-    }
-
-    if (lowerQuestion.includes('contact') || lowerQuestion.includes('who')) {
-      return "Based on the uploaded knowledge base: For FAT-related queries, you can reach out to the Finance Manager (ext. 4521) or the Accounting Lead (ext. 4522). For tax matters, contact the Tax Specialist at tax@company.com.";
-    }
-
-    if (lowerQuestion.includes('process') || lowerQuestion.includes('workflow') || lowerQuestion.includes('how')) {
-      return "Based on the uploaded knowledge base: Most FAT processes follow a standard workflow: 1) Request submission, 2) Manager approval, 3) Finance review, 4) Final processing. Specific timelines vary by request type but typically take 3-5 business days.";
-    }
-
-    return `Based on the uploaded knowledge base: I found relevant information about "${question}". The knowledge base contains procedures and contacts that can help answer your question. For specific details, please refer to the uploaded documentation or ask more specifically about processes, contacts, or workflows.`;
   };
 
   return (
