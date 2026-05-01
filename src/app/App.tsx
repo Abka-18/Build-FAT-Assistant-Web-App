@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { FileText, Folder, Moon, Send, Sun, Trash2, Upload } from 'lucide-react';
+import type { Session } from '@supabase/supabase-js';
+import { FileText, Folder, LogOut, Moon, Send, Sun, Trash2, Upload } from 'lucide-react';
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
+import { supabase } from '../lib/supabase';
+import LoginPage from './LoginPage';
 
 interface Message {
   id: string;
@@ -63,6 +66,8 @@ export default function App() {
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
+  const [authSession, setAuthSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const theme = themeTokens[themeMode];
@@ -76,8 +81,19 @@ export default function App() {
   }, [themeMode]);
 
   useEffect(() => {
-    fetchDocuments();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setAuthSession(session);
+      setAuthLoading(false);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthSession(session);
+    });
+    return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (authSession) fetchDocuments();
+  }, [authSession]);
 
   const fetchDocuments = async () => {
     setIsLoadingDocs(true);
@@ -103,9 +119,11 @@ export default function App() {
 
   const toggleTheme = () => setThemeMode((t) => (t === 'light' ? 'dark' : 'light'));
 
+  const handleLogout = () => supabase.auth.signOut();
+
   const handleFileUpload = async (file: File) => {
-    if (file.size > 2 * 1024 * 1024) {
-      alert('File size must be less than 2MB');
+    if (file.size > 50 * 1024 * 1024) {
+      alert('File size must be less than 50MB');
       return;
     }
     const extension = file.name.split('.').pop()?.toLowerCase();
@@ -265,6 +283,21 @@ export default function App() {
     return `AI request failed dengan status ${status}.`;
   };
 
+  if (authLoading) {
+    return (
+      <div className="size-full flex items-center justify-center" style={{ backgroundColor: theme.app }}>
+        <div
+          className="w-8 h-8 border-2 rounded-full animate-spin"
+          style={{ borderColor: theme.border, borderTopColor: theme.primary }}
+        />
+      </div>
+    );
+  }
+
+  if (!authSession) {
+    return <LoginPage theme={theme} themeMode={themeMode} onToggleTheme={toggleTheme} />;
+  }
+
   return (
     <div className="size-full flex transition-colors duration-200" style={{ backgroundColor: theme.app }}>
       {/* Left panel — Knowledge Base */}
@@ -311,7 +344,7 @@ export default function App() {
                 .txt, .pdf, .docx, .xls, .xlsx, or .csv
               </p>
               <p className="text-xs" style={{ color: theme.textMuted }}>
-                Max 2MB
+                Max 50MB
               </p>
             </div>
           </div>
@@ -407,6 +440,15 @@ export default function App() {
             style={{ backgroundColor: theme.surfaceMuted, borderColor: theme.border, color: theme.text }}
           >
             {themeMode === 'light' ? <Moon size={20} /> : <Sun size={20} />}
+          </button>
+          <button
+            type="button"
+            onClick={handleLogout}
+            title="Logout"
+            className="w-11 h-11 rounded-lg border flex items-center justify-center transition-colors"
+            style={{ backgroundColor: theme.surfaceMuted, borderColor: theme.border, color: theme.danger }}
+          >
+            <LogOut size={20} />
           </button>
         </div>
 
