@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { extname, join, normalize } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -11,18 +11,7 @@ const PORT = Number(process.env.PORT || 8787);
 const HF_TOKEN = process.env.HF_TOKEN;
 const HF_MODEL = process.env.HF_MODEL || 'Qwen/Qwen2.5-7B-Instruct';
 const HF_API_URL = 'https://router.huggingface.co/v1/chat/completions';
-
-const mimeTypes = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.ico': 'image/x-icon',
-};
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'http://localhost:5173';
 
 async function loadEnvFile() {
   try {
@@ -47,7 +36,20 @@ async function loadEnvFile() {
   }
 }
 
-function sendJson(res, status, data) {
+function setCorsHeaders(req, res) {
+  const origin = req.headers.origin;
+  const allowedOrigins = ALLOWED_ORIGIN.split(',').map((item) => item.trim());
+
+  if (origin && (allowedOrigins.includes(origin) || allowedOrigins.includes('*'))) {
+    res.setHeader('access-control-allow-origin', allowedOrigins.includes('*') ? '*' : origin);
+  }
+
+  res.setHeader('access-control-allow-methods', 'GET,POST,OPTIONS');
+  res.setHeader('access-control-allow-headers', 'content-type,authorization');
+}
+
+function sendJson(req, res, status, data) {
+  setCorsHeaders(req, res);
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(data));
 }
@@ -81,8 +83,8 @@ function buildMessages(question, knowledgeBase) {
 
 async function handleChat(req, res) {
   if (!HF_TOKEN) {
-    sendJson(res, 500, {
-      error: 'HF_TOKEN belum diset. Buat file .env dari .env.example, isi token Hugging Face, lalu restart npm run dev.',
+    sendJson(req, res, 500, {
+      error: 'HF_TOKEN belum diset. Buat file backend/.env dari backend/.env.example, isi token Hugging Face, lalu restart backend.',
     });
     return;
   }
@@ -91,13 +93,13 @@ async function handleChat(req, res) {
   try {
     body = await readJsonBody(req);
   } catch {
-    sendJson(res, 400, { error: 'Invalid JSON request body.' });
+    sendJson(req, res, 400, { error: 'Invalid JSON request body.' });
     return;
   }
 
   const question = String(body.question || '').trim();
   if (!question) {
-    sendJson(res, 400, { error: 'Question is required.' });
+    sendJson(req, res, 400, { error: 'Question is required.' });
     return;
   }
 
@@ -119,19 +121,19 @@ async function handleChat(req, res) {
     const payload = await hfResponse.json().catch(() => ({}));
 
     if (!hfResponse.ok) {
-      sendJson(res, hfResponse.status, {
+      sendJson(req, res, hfResponse.status, {
         error: getHuggingFaceError(payload) || `Hugging Face request failed with status ${hfResponse.status}.`,
       });
       return;
     }
 
     const answer = payload.choices?.[0]?.message?.content;
-    sendJson(res, 200, {
+    sendJson(req, res, 200, {
       answer: answer || 'The model did not return an answer.',
       model: HF_MODEL,
     });
   } catch (error) {
-    sendJson(res, 502, {
+    sendJson(req, res, 502, {
       error: error instanceof Error ? error.message : 'Failed to contact Hugging Face.',
     });
   }
@@ -145,44 +147,30 @@ function getHuggingFaceError(payload) {
   return '';
 }
 
-async function serveStatic(req, res) {
-  const url = new URL(req.url || '/', `http://${req.headers.host}`);
-  const requestedPath = url.pathname === '/' ? '/index.html' : url.pathname;
-  const safePath = normalize(requestedPath).replace(/^(\.\.[/\\])+/, '');
-  const filePath = join(__dirname, 'dist', safePath);
-
-  try {
-    const file = await readFile(filePath);
-    res.writeHead(200, {
-      'content-type': mimeTypes[extname(filePath)] || 'application/octet-stream',
-    });
-    res.end(file);
-  } catch {
-    try {
-      const fallback = await readFile(join(__dirname, 'dist', 'index.html'));
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end(fallback);
-    } catch {
-      sendJson(res, 404, {
-        error: 'Build output not found. Run npm run build first, or use npm run dev with npm run api.',
-      });
-    }
-  }
-}
-
 createServer(async (req, res) => {
+  if (req.method === 'OPTIONS') {
+    setCorsHeaders(req, res);
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/health') {
+    sendJson(req, res, 200, {
+      ok: true,
+      model: HF_MODEL,
+      hasToken: Boolean(HF_TOKEN),
+    });
+    return;
+  }
+
   if (req.method === 'POST' && req.url?.startsWith('/api/chat')) {
     await handleChat(req, res);
     return;
   }
 
-  if (req.method === 'GET' || req.method === 'HEAD') {
-    await serveStatic(req, res);
-    return;
-  }
-
-  sendJson(res, 405, { error: 'Method not allowed.' });
+  sendJson(req, res, 404, { error: 'Not found.' });
 }).listen(PORT, () => {
-  console.log(`FAT Assistant server running at http://localhost:${PORT}`);
+  console.log(`FAT Assistant backend running at http://localhost:${PORT}`);
   console.log(`Using Hugging Face model: ${HF_MODEL}`);
 });

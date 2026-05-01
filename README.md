@@ -5,16 +5,29 @@
 
   ## Running the code
 
-  Run `npm i` to install the dependencies.
+  Install frontend dependencies:
 
-  Create a Hugging Face token with Inference Providers access, then copy `.env.example` to `.env` and fill in your token:
+  ```bash
+  npm i
+  ```
+
+  Create a Hugging Face token with Inference Providers access, then copy `backend/.env.example` to `backend/.env` and fill in your token:
 
   ```env
   HF_TOKEN=hf_your_huggingface_token_here
   HF_MODEL=Qwen/Qwen2.5-7B-Instruct
+  PORT=8787
+  ALLOWED_ORIGIN=http://localhost:5173
   ```
 
-  Run the Vite app and Hugging Face API proxy together:
+  Run the backend in one terminal:
+
+  ```bash
+  cd backend
+  npm run dev
+  ```
+
+  Run the frontend in another terminal:
 
   ```bash
   npm run dev
@@ -22,16 +35,9 @@
 
   Open the URL shown by Vite, usually `http://localhost:5173`.
 
-  To run only the API proxy:
-
-  ```bash
-  npm run api
-  ```
-
-  For production, build the web app and start the server:
+  For production frontend build:
 
   ```bash
   npm run build
-  npm start
   ```
   
