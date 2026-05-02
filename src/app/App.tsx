@@ -70,6 +70,8 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [isRecovery, setIsRecovery] = useState(false);
   const [mobileTab, setMobileTab] = useState<'kb' | 'chat'>('chat');
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [activeDocIds, setActiveDocIds] = useState<Set<string>>(new Set());
   const [newPassword, setNewPassword] = useState('');
   const [recoveryLoading, setRecoveryLoading] = useState(false);
   const [recoveryError, setRecoveryError] = useState('');
@@ -77,7 +79,6 @@ export default function App() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const theme = themeTokens[themeMode];
 
-  const knowledgeBase = documents.map((d) => d.content).join('\n\n');
   const apiBase = (import.meta.env.VITE_API_URL as string) || '';
 
   useEffect(() => {
@@ -243,36 +244,66 @@ export default function App() {
     }
   };
 
-  const getRelevantContext = (question: string, fullText: string): string => {
+  const getRelevantContext = (question: string, docs: KBDocument[]): { context: string; usedIds: string[] } => {
     const MAX_CHARS = 80_000;
-    if (fullText.length <= MAX_CHARS) return fullText;
+    const CHUNK = 1500;
+    const OVERLAP = 150;
 
-    const CHUNK = 2000;
-    const OVERLAP = 200;
-    const chunks: { text: string; idx: number }[] = [];
-    let start = 0;
-    while (start < fullText.length) {
-      chunks.push({ text: fullText.slice(start, start + CHUNK), idx: chunks.length });
-      if (start + CHUNK >= fullText.length) break;
-      start += CHUNK - OVERLAP;
-    }
+    if (docs.length === 0) return { context: '', usedIds: [] };
 
-    const terms = new Set(question.toLowerCase().split(/\s+/).filter((w) => w.length > 3));
-    const scored = chunks
-      .map(({ text, idx }) => {
-        const lower = text.toLowerCase();
+    const terms = question.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+
+    // Tier 1: score each document by keyword relevance
+    const scoredDocs = docs
+      .map((doc) => {
+        const lower = doc.content.toLowerCase();
         let score = 0;
         for (const term of terms) score += (lower.match(new RegExp(term, 'g')) || []).length;
-        return { text, score, idx };
+        return { doc, score };
       })
-      .sort((a, b) => b.score - a.score || a.idx - b.idx);
+      .sort((a, b) => b.score - a.score);
 
     let result = '';
-    for (const { text } of scored) {
-      if (result.length + text.length > MAX_CHARS) break;
-      result += text + '\n\n';
+    const usedIds: string[] = [];
+
+    for (const { doc } of scoredDocs) {
+      if (result.length >= MAX_CHARS) break;
+      const remaining = MAX_CHARS - result.length;
+
+      let docText = '';
+      if (doc.content.length <= remaining) {
+        docText = doc.content;
+      } else {
+        // Tier 2: chunk within this doc and pick top chunks by relevance
+        const chunks: { text: string; idx: number }[] = [];
+        let start = 0;
+        while (start < doc.content.length) {
+          chunks.push({ text: doc.content.slice(start, start + CHUNK), idx: chunks.length });
+          if (start + CHUNK >= doc.content.length) break;
+          start += CHUNK - OVERLAP;
+        }
+        const scored = chunks
+          .map(({ text, idx }) => {
+            const lower = text.toLowerCase();
+            let s = 0;
+            for (const term of terms) s += (lower.match(new RegExp(term, 'g')) || []).length;
+            return { text, score: s, idx };
+          })
+          .sort((a, b) => b.score - a.score || a.idx - b.idx);
+
+        for (const { text } of scored) {
+          if (docText.length + text.length > remaining) break;
+          docText += text + '\n\n';
+        }
+      }
+
+      if (docText.trim()) {
+        result += `[File: ${doc.title}]\n${docText}\n\n`;
+        usedIds.push(doc.id);
+      }
     }
-    return result || fullText.slice(0, MAX_CHARS);
+
+    return { context: result, usedIds };
   };
 
   const handleSendMessage = async () => {
@@ -283,10 +314,12 @@ export default function App() {
     setInputValue('');
     setIsTyping(true);
     try {
+      const { context, usedIds } = getRelevantContext(question, documents);
+      setActiveDocIds(new Set(usedIds));
       const response = await fetch(`${apiBase}/api/chat`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sessionId, question, knowledgeBase: knowledgeBase ? getRelevantContext(question, knowledgeBase) : '' }),
+        body: JSON.stringify({ sessionId, question, knowledgeBase: context }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(getApiErrorMessage(response.status, payload));
@@ -497,15 +530,42 @@ export default function App() {
               {documents.map((doc) => (
                 <div key={doc.id} className="flex items-center gap-2 px-3 py-2 rounded-lg group" style={{ backgroundColor: theme.surfaceMuted }}>
                   <FileText size={15} style={{ color: theme.textMuted, flexShrink: 0 }} />
+                  {activeDocIds.has(doc.id) && (
+                    <span
+                      className="w-1.5 h-1.5 rounded-full shrink-0"
+                      style={{ backgroundColor: '#10B981' }}
+                      title="Used in last response"
+                    />
+                  )}
                   <span className="text-sm flex-1 truncate" style={{ color: theme.text }} title={doc.title}>{doc.title}</span>
-                  <button
-                    onClick={() => handleDeleteDocument(doc.id)}
-                    className="opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity p-1 rounded"
-                    style={{ color: theme.danger }}
-                    title="Remove from knowledge base"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  {pendingDeleteId === doc.id ? (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <span className="text-xs font-medium" style={{ color: theme.danger }}>Hapus?</span>
+                      <button
+                        onClick={() => { handleDeleteDocument(doc.id); setPendingDeleteId(null); }}
+                        className="text-xs px-2 py-0.5 rounded font-medium"
+                        style={{ backgroundColor: theme.danger, color: 'white' }}
+                      >
+                        Ya
+                      </button>
+                      <button
+                        onClick={() => setPendingDeleteId(null)}
+                        className="text-xs px-2 py-0.5 rounded font-medium border"
+                        style={{ backgroundColor: theme.surface, borderColor: theme.border, color: theme.text }}
+                      >
+                        Tidak
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setPendingDeleteId(doc.id)}
+                      className="opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity p-1 rounded"
+                      style={{ color: theme.danger }}
+                      title="Hapus dari knowledge base"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
