@@ -127,8 +127,8 @@ export default function App() {
   const handleLogout = () => supabase.auth.signOut();
 
   const handleFileUpload = async (file: File) => {
-    if (file.size > 50 * 1024 * 1024) {
-      alert('File size must be less than 50MB');
+    if (file.size > 10 * 1024 * 1024) {
+      alert('File size must be less than 10MB');
       return;
     }
     const extension = file.name.split('.').pop()?.toLowerCase();
@@ -242,6 +242,38 @@ export default function App() {
     }
   };
 
+  const getRelevantContext = (question: string, fullText: string): string => {
+    const MAX_CHARS = 300_000;
+    if (fullText.length <= MAX_CHARS) return fullText;
+
+    const CHUNK = 2000;
+    const OVERLAP = 200;
+    const chunks: { text: string; idx: number }[] = [];
+    let start = 0;
+    while (start < fullText.length) {
+      chunks.push({ text: fullText.slice(start, start + CHUNK), idx: chunks.length });
+      if (start + CHUNK >= fullText.length) break;
+      start += CHUNK - OVERLAP;
+    }
+
+    const terms = new Set(question.toLowerCase().split(/\s+/).filter((w) => w.length > 3));
+    const scored = chunks
+      .map(({ text, idx }) => {
+        const lower = text.toLowerCase();
+        let score = 0;
+        for (const term of terms) score += (lower.match(new RegExp(term, 'g')) || []).length;
+        return { text, score, idx };
+      })
+      .sort((a, b) => b.score - a.score || a.idx - b.idx);
+
+    let result = '';
+    for (const { text } of scored) {
+      if (result.length + text.length > MAX_CHARS) break;
+      result += text + '\n\n';
+    }
+    return result || fullText.slice(0, MAX_CHARS);
+  };
+
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
     const question = inputValue;
@@ -253,7 +285,7 @@ export default function App() {
       const response = await fetch(`${apiBase}/api/chat`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sessionId, question, knowledgeBase }),
+        body: JSON.stringify({ sessionId, question, knowledgeBase: knowledgeBase ? getRelevantContext(question, knowledgeBase) : '' }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(getApiErrorMessage(response.status, payload));
@@ -418,7 +450,7 @@ export default function App() {
                 .txt, .pdf, .docx, .xls, .xlsx, or .csv
               </p>
               <p className="text-xs" style={{ color: theme.textMuted }}>
-                Max 50MB
+                Max 10MB
               </p>
             </div>
           </div>
