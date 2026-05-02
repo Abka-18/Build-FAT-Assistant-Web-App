@@ -69,6 +69,7 @@ export default function App() {
   const [authSession, setAuthSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [isRecovery, setIsRecovery] = useState(false);
+  const [mobileTab, setMobileTab] = useState<'kb' | 'chat'>('chat');
   const [newPassword, setNewPassword] = useState('');
   const [recoveryLoading, setRecoveryLoading] = useState(false);
   const [recoveryError, setRecoveryError] = useState('');
@@ -243,7 +244,7 @@ export default function App() {
   };
 
   const getRelevantContext = (question: string, fullText: string): string => {
-    const MAX_CHARS = 300_000;
+    const MAX_CHARS = 80_000;
     if (fullText.length <= MAX_CHARS) return fullText;
 
     const CHUNK = 2000;
@@ -405,13 +406,49 @@ export default function App() {
   }
 
   return (
-    <div className="size-full flex transition-colors duration-200" style={{ backgroundColor: theme.app }}>
-      {/* Left panel — Knowledge Base */}
+    <div className="size-full flex flex-col transition-colors duration-200" style={{ backgroundColor: theme.app }}>
+
+      {/* Mobile tab bar */}
       <div
-        className="w-[30%] border-r flex flex-col transition-colors duration-200"
+        className="flex md:hidden border-b shrink-0"
         style={{ backgroundColor: theme.surface, borderColor: theme.border }}
       >
-        <div className="p-4 border-b" style={{ borderColor: theme.border }}>
+        <button
+          className="flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 transition-colors"
+          style={{
+            color: mobileTab === 'chat' ? theme.primary : theme.textMuted,
+            borderBottom: mobileTab === 'chat' ? `2px solid ${theme.primary}` : '2px solid transparent',
+          }}
+          onClick={() => setMobileTab('chat')}
+        >
+          <Send size={15} /> Chat
+        </button>
+        <button
+          className="flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 transition-colors"
+          style={{
+            color: mobileTab === 'kb' ? theme.primary : theme.textMuted,
+            borderBottom: mobileTab === 'kb' ? `2px solid ${theme.primary}` : '2px solid transparent',
+          }}
+          onClick={() => setMobileTab('kb')}
+        >
+          <Folder size={15} /> Knowledge Base
+          {documents.length > 0 && (
+            <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ backgroundColor: theme.primary, color: 'white' }}>
+              {documents.length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* Main content */}
+      <div className="flex-1 flex flex-row overflow-hidden">
+
+      {/* Left panel — Knowledge Base */}
+      <div
+        className={`${mobileTab === 'kb' ? 'flex' : 'hidden'} md:flex w-full md:w-[30%] border-r flex-col transition-colors duration-200`}
+        style={{ backgroundColor: theme.surface, borderColor: theme.border }}
+      >
+        <div className="p-4 border-b hidden md:block" style={{ borderColor: theme.border }}>
           <h2 className="flex items-center gap-2" style={{ color: theme.text }}>
             <Folder size={20} style={{ color: theme.primary }} />
             Knowledge Base
@@ -427,13 +464,9 @@ export default function App() {
             onDrop={handleDrop}
             onDragOver={(e) => e.preventDefault()}
             onClick={() => fileInputRef.current?.click()}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = theme.surfaceHover;
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = themeMode === 'dark' ? theme.input : 'transparent';
-            }}
-            className="border-2 border-dashed rounded-lg p-6 cursor-pointer transition-colors"
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = theme.surfaceHover; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = themeMode === 'dark' ? theme.input : 'transparent'; }}
+            className="border-2 border-dashed rounded-xl p-6 cursor-pointer transition-colors"
             style={{ borderColor: theme.border, backgroundColor: themeMode === 'dark' ? theme.input : 'transparent' }}
           >
             <input
@@ -445,23 +478,16 @@ export default function App() {
             />
             <div className="flex flex-col items-center gap-2 text-center">
               <Upload size={32} style={{ color: theme.textMuted }} />
-              <p style={{ color: theme.text }}>Drag & drop or click to upload</p>
-              <p className="text-sm" style={{ color: theme.textMuted }}>
-                .txt, .pdf, .docx, .xls, .xlsx, or .csv
-              </p>
-              <p className="text-xs" style={{ color: theme.textMuted }}>
-                Max 10MB
-              </p>
+              <p style={{ color: theme.text }}>Tap or click to upload</p>
+              <p className="text-sm" style={{ color: theme.textMuted }}>.txt, .pdf, .docx, .xls, .xlsx, .csv</p>
+              <p className="text-xs" style={{ color: theme.textMuted }}>Max 10MB</p>
             </div>
           </div>
 
           {/* Document list */}
           {isLoadingDocs ? (
             <div className="flex items-center justify-center py-2">
-              <div
-                className="w-5 h-5 border-2 rounded-full animate-spin"
-                style={{ borderColor: theme.border, borderTopColor: theme.primary }}
-              />
+              <div className="w-5 h-5 border-2 rounded-full animate-spin" style={{ borderColor: theme.border, borderTopColor: theme.primary }} />
             </div>
           ) : documents.length > 0 ? (
             <div className="flex flex-col gap-1">
@@ -469,18 +495,12 @@ export default function App() {
                 {documents.length} document{documents.length !== 1 ? 's' : ''} loaded
               </p>
               {documents.map((doc) => (
-                <div
-                  key={doc.id}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg group"
-                  style={{ backgroundColor: theme.surfaceMuted }}
-                >
+                <div key={doc.id} className="flex items-center gap-2 px-3 py-2 rounded-lg group" style={{ backgroundColor: theme.surfaceMuted }}>
                   <FileText size={15} style={{ color: theme.textMuted, flexShrink: 0 }} />
-                  <span className="text-sm flex-1 truncate" style={{ color: theme.text }} title={doc.title}>
-                    {doc.title}
-                  </span>
+                  <span className="text-sm flex-1 truncate" style={{ color: theme.text }} title={doc.title}>{doc.title}</span>
                   <button
                     onClick={() => handleDeleteDocument(doc.id)}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:opacity-100"
+                    className="opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity p-1 rounded"
                     style={{ color: theme.danger }}
                     title="Remove from knowledge base"
                   >
@@ -493,19 +513,19 @@ export default function App() {
 
           {/* Manual text */}
           <div className="flex flex-col gap-2">
-            <label style={{ color: theme.text }}>Or paste text directly</label>
+            <label className="text-sm" style={{ color: theme.text }}>Or paste text directly</label>
             <textarea
               value={manualText}
               onChange={(e) => setManualText(e.target.value)}
               placeholder="Paste SOPs, FAQs, workflows, contacts here..."
-              className="w-full h-32 p-3 border rounded-lg resize-none"
+              className="w-full h-32 p-3 border rounded-lg resize-none text-sm"
               style={{ backgroundColor: theme.input, borderColor: theme.border, color: theme.text }}
             />
           </div>
 
           <button
             onClick={handleSaveMemory}
-            className="w-full py-3 rounded-lg transition-colors"
+            className="w-full py-3 rounded-lg transition-colors font-medium"
             style={{ backgroundColor: theme.primary, color: 'white' }}
           >
             Save Memory
@@ -514,38 +534,29 @@ export default function App() {
       </div>
 
       {/* Right panel — Chat */}
-      <div className="flex-1 flex flex-col transition-colors duration-200" style={{ backgroundColor: theme.surface }}>
-        <div
-          className="p-4 border-b flex items-center gap-3"
-          style={{ borderColor: theme.border, boxShadow: theme.shadow }}
-        >
-          <div
-            className="w-10 h-10 rounded-full flex items-center justify-center"
-            style={{ backgroundColor: theme.primary, color: 'white' }}
-          >
+      <div
+        className={`${mobileTab === 'chat' ? 'flex' : 'hidden'} md:flex flex-1 flex-col transition-colors duration-200`}
+        style={{ backgroundColor: theme.surface }}
+      >
+        <div className="p-3 md:p-4 border-b flex items-center gap-2 md:gap-3" style={{ borderColor: theme.border, boxShadow: theme.shadow }}>
+          <div className="w-9 h-9 md:w-10 md:h-10 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: theme.primary, color: 'white' }}>
             FA
           </div>
-          <div className="flex-1">
-            <h3 style={{ color: theme.text }}>FAT Assistant</h3>
-            <p className="text-sm flex items-center gap-2" style={{ color: theme.textMuted }}>
-              <span
-                className="w-2 h-2 rounded-full"
-                style={{ backgroundColor: documents.length > 0 ? '#10B981' : theme.textMuted }}
-              />
-              {documents.length > 0
-                ? `${documents.length} document${documents.length !== 1 ? 's' : ''} in knowledge base`
-                : 'No knowledge base loaded'}
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm md:text-base font-semibold" style={{ color: theme.text }}>FAT Assistant</h3>
+            <p className="text-xs flex items-center gap-1.5 truncate" style={{ color: theme.textMuted }}>
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: documents.length > 0 ? '#10B981' : theme.textMuted }} />
+              {documents.length > 0 ? `${documents.length} doc${documents.length !== 1 ? 's' : ''} loaded` : 'No knowledge base'}
             </p>
           </div>
           <button
             type="button"
             onClick={toggleTheme}
             aria-label={themeMode === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-            title={themeMode === 'light' ? 'Dark mode' : 'Light mode'}
-            className="w-11 h-11 rounded-lg border flex items-center justify-center transition-colors"
+            className="w-9 h-9 md:w-11 md:h-11 rounded-lg border flex items-center justify-center shrink-0"
             style={{ backgroundColor: theme.surfaceMuted, borderColor: theme.border, color: theme.text }}
           >
-            {themeMode === 'light' ? <Moon size={20} /> : <Sun size={20} />}
+            {themeMode === 'light' ? <Moon size={18} /> : <Sun size={18} />}
           </button>
           <button
             type="button"
@@ -574,7 +585,7 @@ export default function App() {
               {messages.map((msg) => (
                 <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div
-                    className="max-w-[70%] px-4 py-3 rounded-xl whitespace-pre-wrap"
+                    className="max-w-[85%] md:max-w-[70%] px-4 py-3 rounded-xl whitespace-pre-wrap"
                     style={{
                       backgroundColor: msg.sender === 'user' ? theme.primary : theme.surfaceMuted,
                       color: msg.sender === 'user' ? 'white' : theme.text,
@@ -609,7 +620,7 @@ export default function App() {
           )}
         </div>
 
-        <div className="p-4 border-t" style={{ borderColor: theme.border }}>
+        <div className="p-3 md:p-4 border-t" style={{ borderColor: theme.border }}>
           <div className="flex gap-2">
             <input
               type="text"
@@ -630,6 +641,7 @@ export default function App() {
           </div>
         </div>
       </div>
+    </div>
     </div>
   );
 }
