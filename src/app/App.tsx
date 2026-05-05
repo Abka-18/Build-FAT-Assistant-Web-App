@@ -3,8 +3,12 @@ import type { Session } from '@supabase/supabase-js';
 import { FileText, Folder, LogOut, Moon, Send, Sun, Trash2, Upload } from 'lucide-react';
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
+import * as pdfjs from 'pdfjs-dist';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { supabase } from '../lib/supabase';
 import LoginPage from './LoginPage';
+
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 interface Message {
   id: string;
@@ -165,10 +169,23 @@ export default function App() {
   };
 
   const extractTextFromFile = async (file: File, extension: string): Promise<string> => {
-    if (extension === 'txt' || extension === 'csv' || extension === 'pdf') {
+    if (extension === 'txt' || extension === 'csv') {
       return file.text();
     }
     const buffer = await file.arrayBuffer();
+    if (extension === 'pdf') {
+      const pdf = await pdfjs.getDocument({ data: buffer }).promise;
+      const pages: string[] = [];
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        const text = content.items
+          .map((item) => ('str' in item ? item.str : ''))
+          .join(' ');
+        pages.push(text);
+      }
+      return pages.join('\n\n');
+    }
     if (extension === 'docx') {
       const result = await mammoth.extractRawText({ arrayBuffer: buffer });
       return result.value;
