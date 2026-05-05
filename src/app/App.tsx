@@ -237,6 +237,25 @@ export default function App() {
     return payload.document;
   };
 
+  const [reindexing, setReindexing] = useState(false);
+
+  const handleReindex = async () => {
+    setReindexing(true);
+    try {
+      const res = await fetch(`${apiBase}/api/reindex`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`Re-indexing ${data.count} dokumen di background. Tunggu ~30 detik lalu coba tanya lagi.`);
+      } else {
+        alert(data.error || 'Re-index gagal.');
+      }
+    } catch {
+      alert('Tidak bisa menghubungi server.');
+    } finally {
+      setReindexing(false);
+    }
+  };
+
   const handleDeleteDocument = (id: string) => {
     setDocuments((prev) => prev.filter((d) => d.id !== id));
     if (!id.startsWith('temp-')) {
@@ -507,6 +526,18 @@ export default function App() {
               ))}
             </div>
           ) : null}
+
+          {/* Re-index button */}
+          {documents.length > 0 && (
+            <button
+              onClick={handleReindex}
+              disabled={reindexing}
+              className="text-xs px-3 py-1.5 rounded-lg border w-full transition-opacity"
+              style={{ borderColor: theme.border, color: theme.textMuted, opacity: reindexing ? 0.5 : 1 }}
+            >
+              {reindexing ? 'Re-indexing…' : '↻ Re-index dokumen (jika AI tidak bisa baca file)'}
+            </button>
+          )}
 
           {/* Manual text */}
           <div className="flex flex-col gap-2">
