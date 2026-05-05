@@ -145,7 +145,17 @@ export default function App() {
     try {
       const content = await extractTextFromFile(file, extension);
       if (!content.trim()) {
-        alert('No readable text was found in this file');
+        if (extension === 'pdf') {
+          alert(
+            'PDF ini tidak bisa dibaca — kemungkinan PDF scan (berisi gambar, bukan teks).\n\n' +
+            'Solusi:\n' +
+            '1. Buka di Google Docs → File → Download → .docx → upload .docx-nya\n' +
+            '2. Gunakan layanan OCR online (smallpdf.com, ilovepdf.com)\n' +
+            '3. Copy-paste teks manual ke kolom "Or paste text directly"'
+          );
+        } else {
+          alert('No readable text was found in this file');
+        }
         return;
       }
       const tempId = `temp-${Date.now()}`;
