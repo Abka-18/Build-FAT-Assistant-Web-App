@@ -76,6 +76,7 @@ export default function App() {
   const [mobileTab, setMobileTab] = useState<'kb' | 'chat'>('chat');
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [activeDocTitles, setActiveDocTitles] = useState<Set<string>>(new Set());
+  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [recoveryLoading, setRecoveryLoading] = useState(false);
   const [recoveryError, setRecoveryError] = useState('');
@@ -143,19 +144,11 @@ export default function App() {
       return;
     }
     try {
+      setUploadProgress('Membaca file...');
       const content = await extractTextFromFile(file, extension);
+      setUploadProgress(null);
       if (!content.trim()) {
-        if (extension === 'pdf') {
-          alert(
-            'PDF ini tidak bisa dibaca — kemungkinan PDF scan (berisi gambar, bukan teks).\n\n' +
-            'Solusi:\n' +
-            '1. Buka di Google Docs → File → Download → .docx → upload .docx-nya\n' +
-            '2. Gunakan layanan OCR online (smallpdf.com, ilovepdf.com)\n' +
-            '3. Copy-paste teks manual ke kolom "Or paste text directly"'
-          );
-        } else {
-          alert('No readable text was found in this file');
-        }
+        alert('Tidak ada teks yang bisa diekstrak dari file ini.');
         return;
       }
       const tempId = `temp-${Date.now()}`;
@@ -175,6 +168,8 @@ export default function App() {
         .catch((err) => console.warn('Failed to save to Supabase:', err));
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Unable to read this file');
+    } finally {
+      setUploadProgress(null);
     }
   };
 
@@ -189,12 +184,33 @@ export default function App() {
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const content = await page.getTextContent();
-        const text = content.items
-          .map((item) => ('str' in item ? item.str : ''))
-          .join(' ');
+        const text = content.items.map((item) => ('str' in item ? item.str : '')).join(' ');
         pages.push(text);
       }
-      return pages.join('\n\n');
+      const directText = pages.join('\n\n');
+      if (directText.trim()) return directText;
+
+      // Scanned PDF — fallback to Tesseract OCR
+      setUploadProgress('PDF scan terdeteksi, memuat OCR engine...');
+      const { createWorker } = await import('tesseract.js');
+      const worker = await createWorker('eng', 1, { logger: () => {} });
+      const ocrPages: string[] = [];
+      const MAX_OCR_PAGES = 30;
+      const total = Math.min(pdf.numPages, MAX_OCR_PAGES);
+      for (let i = 1; i <= total; i++) {
+        setUploadProgress(`OCR halaman ${i} dari ${total}...`);
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 2.0 });
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise;
+        const { data: { text } } = await worker.recognize(canvas);
+        ocrPages.push(text);
+      }
+      await worker.terminate();
+      if (pdf.numPages > MAX_OCR_PAGES) ocrPages.push(`[Hanya ${MAX_OCR_PAGES} halaman pertama yang diproses OCR]`);
+      return ocrPages.join('\n\n');
     }
     if (extension === 'docx') {
       const result = await mammoth.extractRawText({ arrayBuffer: buffer });
@@ -492,12 +508,20 @@ export default function App() {
               onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
               className="hidden"
             />
-            <div className="flex flex-col items-center gap-2 text-center">
-              <Upload size={32} style={{ color: theme.textMuted }} />
-              <p style={{ color: theme.text }}>Tap or click to upload</p>
-              <p className="text-sm" style={{ color: theme.textMuted }}>.txt, .pdf, .docx, .xls, .xlsx, .csv</p>
-              <p className="text-xs" style={{ color: theme.textMuted }}>Max 10MB</p>
-            </div>
+            {uploadProgress ? (
+              <div className="flex flex-col items-center gap-3 text-center">
+                <div className="w-7 h-7 border-2 rounded-full animate-spin" style={{ borderColor: theme.border, borderTopColor: theme.primary }} />
+                <p className="text-sm font-medium" style={{ color: theme.text }}>{uploadProgress}</p>
+                <p className="text-xs" style={{ color: theme.textMuted }}>Jangan tutup halaman ini</p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-2 text-center">
+                <Upload size={32} style={{ color: theme.textMuted }} />
+                <p style={{ color: theme.text }}>Tap or click to upload</p>
+                <p className="text-sm" style={{ color: theme.textMuted }}>.txt, .pdf, .docx, .xls, .xlsx, .csv</p>
+                <p className="text-xs" style={{ color: theme.textMuted }}>Max 10MB · PDF scan di-OCR otomatis</p>
+              </div>
+            )}
           </div>
 
           {/* Document list */}
