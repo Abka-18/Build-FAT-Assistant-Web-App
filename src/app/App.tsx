@@ -82,6 +82,12 @@ export default function App() {
 
   const apiBase = (import.meta.env.VITE_API_URL as string) || '';
 
+  const authHeaders = (extra?: Record<string, string>): Record<string, string> => ({
+    'content-type': 'application/json',
+    ...(authSession?.access_token ? { authorization: `Bearer ${authSession.access_token}` } : {}),
+    ...extra,
+  });
+
   useEffect(() => {
     localStorage.setItem('fat-assistant-theme', themeMode);
     document.documentElement.style.colorScheme = themeMode;
@@ -106,7 +112,7 @@ export default function App() {
   const fetchDocuments = async () => {
     setIsLoadingDocs(true);
     try {
-      const res = await fetch(`${apiBase}/api/documents`);
+      const res = await fetch(`${apiBase}/api/documents`, { headers: authHeaders() });
       if (res.ok) {
         const payload = await res.json();
         setDocuments(
@@ -263,7 +269,7 @@ export default function App() {
     };
     const response = await fetch(`${apiBase}/api/documents`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(body),
     });
     if (response.status === 503) return null;
@@ -284,7 +290,7 @@ export default function App() {
   const handleReindex = async () => {
     setReindexing(true);
     try {
-      const res = await fetch(`${apiBase}/api/reindex`, { method: 'POST' });
+      const res = await fetch(`${apiBase}/api/reindex`, { method: 'POST', headers: authHeaders() });
       const data = await res.json();
       if (res.ok) {
         alert(`Re-indexing ${data.count} dokumen di background. Tunggu ~30 detik lalu coba tanya lagi.`);
@@ -301,7 +307,7 @@ export default function App() {
   const handleDeleteDocument = (id: string) => {
     setDocuments((prev) => prev.filter((d) => d.id !== id));
     if (!id.startsWith('temp-')) {
-      fetch(`${apiBase}/api/documents/${id}`, { method: 'DELETE' }).catch(() => {});
+      fetch(`${apiBase}/api/documents/${id}`, { method: 'DELETE', headers: authHeaders() }).catch(() => {});
     }
   };
 
@@ -315,7 +321,7 @@ export default function App() {
     try {
       const response = await fetch(`${apiBase}/api/chat`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ sessionId, question }),
       });
       const payload = await response.json().catch(() => null);
