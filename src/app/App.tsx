@@ -100,6 +100,10 @@ export default function App() {
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setAuthSession(session);
+      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
+        setMessages([]);
+        setSessionId(crypto.randomUUID());
+      }
       if (event === 'PASSWORD_RECOVERY') setIsRecovery(true);
     });
     return () => subscription.unsubscribe();
