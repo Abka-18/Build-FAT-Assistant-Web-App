@@ -3,12 +3,8 @@ import type { Session } from '@supabase/supabase-js';
 import { FileText, Folder, LogOut, Moon, Send, Sun, Trash2, Upload } from 'lucide-react';
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
-import * as pdfjs from 'pdfjs-dist';
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { supabase } from '../lib/supabase';
 import LoginPage from './LoginPage';
-
-pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 interface Message {
   id: string;
@@ -179,6 +175,9 @@ export default function App() {
     }
     const buffer = await file.arrayBuffer();
     if (extension === 'pdf') {
+      const pdfjs = await import('pdfjs-dist');
+      pdfjs.GlobalWorkerOptions.workerSrc =
+        `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
       const pdf = await pdfjs.getDocument({ data: buffer }).promise;
       const pages: string[] = [];
       for (let i = 1; i <= pdf.numPages; i++) {
